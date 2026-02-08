@@ -3,6 +3,18 @@ import { remark } from 'remark'
 import gfm from 'remark-gfm'
 import FS from 'fs-extra'
 
+// Compile regex patterns once at module level for better performance
+const ICON_PATTERNS = {
+  ANY: /^(freeware\s+icon|oss\s+icon|app-store\s+icon|awesome-list\s+icon)/i,
+  FREEWARE: /^freeware\s+icon/i,
+  OSS: /^oss\s+icon/i,
+  APP_STORE: /^app-store\s+icon/i,
+  AWESOME_LIST: /^awesome-list\s+icon/i
+}
+
+const WHITESPACE_REGEX = /\s/g
+const MARK_TEXT_REGEX = /^([\s]+)?-\s/
+
 const getHeadingText = (arr = []) => {
   let title = ''
   arr.forEach(child => {
@@ -36,19 +48,16 @@ const getSoftwareName = (obj, result = { title: '' }) => {
 
 const getIconDetail = (data, url = '') => {
   if (data.type === 'imageReference' && data.identifier) {
-    const identifier = data.identifier.toLocaleLowerCase()
-    if (/^(freeware\s+icon|oss\s+icon|app-store\s+icon|awesome-list\s+icon)/.test(identifier)) {
+    const identifier = data.identifier.toLowerCase()
+    if (ICON_PATTERNS.ANY.test(identifier)) {
       let type = ''
-      if (/^(freeware\s+icon)/.test(identifier)) {
+      if (ICON_PATTERNS.FREEWARE.test(identifier)) {
         type = 'freeware'
-      }
-      if (/^(oss\s+icon)/.test(identifier)) {
+      } else if (ICON_PATTERNS.OSS.test(identifier)) {
         type = 'oss'
-      }
-      if (/^(app-store\s+icon)/.test(identifier)) {
+      } else if (ICON_PATTERNS.APP_STORE.test(identifier)) {
         type = 'app-store'
-      }
-      if (/^(awesome-list\s+icon)/.test(identifier)) {
+      } else if (ICON_PATTERNS.AWESOME_LIST.test(identifier)) {
         type = 'awesome-list'
       }
       return { type, url }
@@ -64,7 +73,7 @@ const getIconDetail = (data, url = '') => {
  */
 const getMarkIcons = (arr = [], parent = {}) => {
   let mark = { icons: [] }
-  if (arr && Array.isArray(arr) && arr[1] && arr[1].type === 'text' && /^([\s]+)?-\s/.test(arr[1].value)) {
+  if (arr && Array.isArray(arr) && arr[1] && arr[1].type === 'text' && MARK_TEXT_REGEX.test(arr[1].value)) {
     mark = { ...mark, ...getSoftwareName(arr[0]) }
     arr = arr.filter(child => {
       const data = getIconDetail(child)
@@ -73,15 +82,19 @@ const getMarkIcons = (arr = [], parent = {}) => {
         return false
       }
       if (child.type === 'link' && child.children && Array.isArray(child.children)) {
-        const childArr = child.children.filter(d => getIconDetail(d))
-        if (childArr.length > 0) {
-          childArr.forEach((item) => {
-            mark.icons.push(getIconDetail(item, child.url))
-          })
+        let hasIcons = false
+        child.children.forEach(d => {
+          const iconDetail = getIconDetail(d)
+          if (iconDetail) {
+            mark.icons.push(getIconDetail(d, child.url))
+            hasIcons = true
+          }
+        })
+        if (hasIcons) {
           return false
         }
       }
-      if (child.type === 'text' && child.value.replace(/\s/g, '') === '') {
+      if (child.type === 'text' && child.value.replace(WHITESPACE_REGEX, '') === '') {
         return false
       }
       return true
@@ -115,27 +128,25 @@ const getMdToAST = (data = [], parent = {}) => {
   return data
 }
 
-remark()
-  .use(gfm)
-  .use(() => (tree) => {
-    const startIndex = tree.children.findIndex(item => item.type === 'html' && /<!--start-->/.test(item.value))
-    const endIndex = tree.children.findIndex(item => item.type === 'html' && /<!--end-->/.test(item.value))
-    const data = tree.children.slice(startIndex + 1, endIndex)
-    const dataAST = getMdToAST([...data])
-    FS.outputJsonSync('./dist/awesome-mac.json', dataAST)
-    console.log(' create file: \x1b[32;1m ./dist/awesome-mac.json \x1b[0m');
-  })
-  .processSync(toVFile.readSync('README.md'))
+/**
+ * Process a markdown file and generate JSON output
+ * @param {string} inputFile - Path to input markdown file
+ * @param {string} outputFile - Path to output JSON file
+ */
+const processMarkdownFile = (inputFile, outputFile) => {
+  remark()
+    .use(gfm)
+    .use(() => (tree) => {
+      const startIndex = tree.children.findIndex(item => item.type === 'html' && /<!--start-->/.test(item.value))
+      const endIndex = tree.children.findIndex(item => item.type === 'html' && /<!--end-->/.test(item.value))
+      const data = tree.children.slice(startIndex + 1, endIndex)
+      const dataAST = getMdToAST([...data])
+      FS.outputJsonSync(outputFile, dataAST)
+      console.log(` create file: \x1b[32;1m ${outputFile} \x1b[0m`);
+    })
+    .processSync(toVFile.readSync(inputFile))
+}
 
-
-remark()
-  .use(gfm)
-  .use(() => (tree) => {
-    const startIndex = tree.children.findIndex(item => item.type === 'html' && /<!--start-->/.test(item.value))
-    const endIndex = tree.children.findIndex(item => item.type === 'html' && /<!--end-->/.test(item.value))
-    const data = tree.children.slice(startIndex + 1, endIndex)
-    const dataAST = getMdToAST([...data])
-    FS.outputJsonSync('./dist/awesome-mac.zh.json', dataAST)
-    console.log(' create file: \x1b[32;1m ./dist/awesome-mac.zh.json \x1b[0m');
-  })
-  .processSync(toVFile.readSync('README-zh.md'))
+// Process both markdown files
+processMarkdownFile('README.md', './dist/awesome-mac.json')
+processMarkdownFile('README-zh.md', './dist/awesome-mac.zh.json')
